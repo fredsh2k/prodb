@@ -88,7 +88,8 @@ class ProdB():
 
     def __call__(self, *args, **kwargs):
         self.bert_masked_model.fit(self.mlm_ds, epochs=self.config.EPOCHS, callbacks=kwargs.get('callbacks', None))
-        self.bert_masked_model.save(self.__str__() + ".h5")
+        # self.bert_masked_model.save(self.__str__() + ".h5")
+        self.bert_masked_model.save(self.__str__() + ".keras") # TODO: # Fix: UserWarning: You are saving your model as an HDF5 file via `model.save()`. This file format is considered legacy. We recommend using instead the native Keras format, e.g. `model.save('my_model.keras')`.
 
         vectorizer = self.vectorize_layer
 
@@ -113,6 +114,13 @@ class ProdB():
         new_v.adapt(tf.data.Dataset.from_tensor_slices(["xyz"]))
         new_v.set_weights(from_disk['weights'])
         """
+
+    def load_weights(self, base_path): # Added ability to load weights
+        self.bert_masked_model = keras.models.load_model(base_path + self.__str__() + ".keras") # TODO: # warning save as keras instead of deprecated h5
+        # self.bert_masked_model = keras.models.load_model(base_path + self.__str__() + ".h5")
+        self.vectorize_layer = pickle.load(open(base_path + self.__str__() +"_TEXT_VECTORIZER.pkl", "rb"))
+        self.id2token = pickle.load(open(base_path + self.__str__() + "_CONFIG.pkl", "rb"))['id2token']
+        self.token2id = pickle.load(open(base_path + self.__str__() + "_CONFIG.pkl", "rb"))['token2id']
 
     def encode(self, texts):
         encoded_texts = self.vectorize_layer(texts)
@@ -219,7 +227,8 @@ class ProdB():
         )
         mlm_model = self.MaskedLanguageModel(inputs, mlm_output, name="masked_bert_model")
 
-        optimizer = keras.optimizers.Adam(learning_rate=self.config.LR)
+        # optimizer = keras.optimizers.Adam(learning_rate=self.config.LR)
+        optimizer = keras.optimizers.legacy.Adam(learning_rate=self.config.LR) # Fix: WARNING:absl:At this time, the v2.11+ optimizer `tf.keras.optimizers.Adam` runs slowly on M1/M2 Macs, please use the legacy Keras optimizer instead, located at `tf.keras.optimizers.legacy.Adam`.
         mlm_model.compile(optimizer=optimizer)
         return mlm_model
 
@@ -249,7 +258,8 @@ class ProdB():
         pbar = tqdm.tqdm(total=(len(sessions)))
         for sess in sessions:
             k = self.vectorize_layer([sess])
-            embeddings = (pretrained_bert_model.predict(k)[0])
+            # embeddings = (pretrained_bert_model.predict(k)[0])
+            embeddings = (pretrained_bert_model.predict(k, verbose=0)[0])
             sample_length = len(sess.split())
             embeddings = embeddings[0:sample_length]
             if make_average:
@@ -279,7 +289,8 @@ class ProdB():
         for sess in sessions:
             sess = sess + " mask"
             k = self.vectorize_layer([sess])
-            embeddings = (pretrained_bert_model.predict(k)[0])
+            # embeddings = (pretrained_bert_model.predict(k)[0])
+            embeddings = (pretrained_bert_model.predict(k, verbose=0)[0])
             sample_length = len(sess.split())
             embeddings = embeddings[sample_length - 1]
             collect_embeddings.append(embeddings)
@@ -292,7 +303,8 @@ class ProdB():
         Run the NEXT Item Prediction task
         """
         gt = []
-        pbar = tqdm.tqdm(total=(len(sessions)))
+        # pbar = tqdm.tqdm(total=(len(sessions)))
+        # pbar = tqdm.notebook.tqdm(total=(len(sessions))) # TODO: test if this fixes printing multiple times
         predictions = []
 
         for index, a in enumerate(sessions):
@@ -310,20 +322,22 @@ class ProdB():
             joined = " ".join(splitted)
             gt.append(to_predict)
             predictions.append(self.predict_from_tokens(joined))
-            pbar.update(1)
-        pbar.close()
+            # pbar.update(1)
+        # pbar.close()
 
         return {"ground" : gt, "top_10_predictions" : predictions}
 
     def predict_from_tokens(self, string_ids):
         sample_tokens = self.vectorize_layer([string_ids])
 
-        prediction = self.bert_masked_model.predict(sample_tokens)
+        # prediction = self.bert_masked_model.predict(sample_tokens)
+        prediction = self.bert_masked_model.predict(sample_tokens, verbose=0)
         masked_index = np.where(sample_tokens == self.mask_token_id)
         masked_index = masked_index[1]
         mask_prediction = prediction[0][masked_index]
 
         top_indices = mask_prediction[0].argsort()[-10:][::-1]
+        # top_indices = mask_prediction[0].argsort()[-100:][::-1] # TODO: added to get top 100 predictions instead of 10
         values = mask_prediction[0][top_indices]
 
         answers = []
@@ -363,5 +377,4 @@ class ProdB():
         vocab = vocab[2: self.config.VOCAB_SIZE - len(special_tokens)] + ["mask"]
         vectorize_layer.set_vocabulary(vocab)
         return vectorize_layer
-
-
+    
